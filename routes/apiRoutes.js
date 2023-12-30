@@ -44,12 +44,36 @@ router.get("/all-products", async (request, response) => {
   }
 });
 
+//get user
+router.post("/get-user-details", async (request, response) => {
+  try {
+    const { email } = request.body;
+
+    const mailToSearchWith = new usersDataModel({ email: email });
+    mailToSearchWith.encryptFieldsSync();
+
+    let checkUser = await usersDataModel.findOne({
+      email: mailToSearchWith.email,
+    });
+    // console.log(email);
+    // console.log(checkUser);
+  } catch (error) {
+    console.log(error.message);
+    response.status(500).json({ message: "INTERNAL Server Error" });
+  }
+});
+
 //adding users
-router.post("/add-customer", jwtAuth, async (request, response) => {
+router.post("/add-customer", async (request, response) => {
   try {
     const { userId, name, email } = request.body;
 
-    const checkUser = await usersDataModel.findOne({ email: email });
+    const mailToSearchWith = new usersDataModel({ email: email });
+    mailToSearchWith.encryptFieldsSync();
+
+    let checkUser = await usersDataModel.findOne({
+      email: mailToSearchWith.email,
+    });
 
     if (checkUser === null) {
       const customer = await stripe.customers.create({
