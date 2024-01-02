@@ -264,7 +264,7 @@ router.post(
       event = stripe.webhooks.constructEvent(
         request.body,
         sig,
-        "whsec_5657c8215d9ad20c837a2761b04e1310c2bc95a4a170f4738f0a422ea2bcfbc4"
+        process.env.STRIPE_WEB_END_POINT
       );
     } catch (err) {
       response.status(400).send(`Webhook Error: ${err.message}`);
