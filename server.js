@@ -7,7 +7,13 @@ const port = process.env.PORT || 5007;
 
 const app = express();
 
-app.use(express.json());
+app.use((req, res, next) => {
+  if (req.originalUrl.includes("/webhook")) {
+    next();
+  } else {
+    express.json()(req, res, next);
+  }
+});
 app.use(cors());
 
 mongoose

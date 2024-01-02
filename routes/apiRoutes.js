@@ -4,6 +4,7 @@ const productDataModel = require("../models/productsData");
 const usersDataModel = require("../models/usersData");
 const jwt = require("jsonwebtoken");
 const jwtAuth = require("../middleware/jwtAuth");
+const cartDataModel = require("../models/cartData");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const router = express.Router();
@@ -59,7 +60,7 @@ router.post("/get-user-details", async (request, response) => {
     // console.log(checkUser);
   } catch (error) {
     console.log(error.message);
-    response.status(500).json({ message: "INTERNAL Server Error" });
+    response.status(500).json({ message: "Internal Server Error" });
   }
 });
 
@@ -95,8 +96,196 @@ router.post("/add-customer", async (request, response) => {
     }
   } catch (error) {
     console.log(error.message);
-    response.status(500).json({ message: "INTERNAL Server Error" });
+    response.status(500).json({ message: "Internal Server Error" });
   }
 });
+
+//getting cart list
+router.get("/get-cart-list/:userId", jwtAuth, async (request, response) => {
+  try {
+    const { userId } = request.params;
+
+    const cartRes = await cartDataModel.find({ userId: userId });
+
+    return response.status(200).json({ cartList: cartRes });
+  } catch (error) {
+    console.log(error.message);
+    response.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+//add items to cart
+router.post("/add-items-to-cart", jwtAuth, async (request, response) => {
+  try {
+    const { userId, productId, imageUrl, name, description, price, rating } =
+      request.body;
+    const productRes = await cartDataModel.findOne({
+      userId: userId,
+      productId: productId,
+    });
+
+    if (productRes === null) {
+      const product = new cartDataModel({
+        userId: userId,
+        productId: productId,
+        imageUrl: imageUrl,
+        name: name,
+        description: description,
+        price: price,
+        rating: rating,
+        quantity: 1,
+      });
+
+      await product.save();
+      return response
+        .status(200)
+        .json({ message: "Product Added Successfully" });
+    } else {
+      const updateRes = await cartDataModel.updateOne(
+        { userId: userId, productId: productId },
+        { $set: { quantity: productRes.quantity + 1 } }
+      );
+      return response
+        .status(200)
+        .json({ message: "Product Quantity Updated Successfully" });
+    }
+  } catch (error) {
+    console.log(error.message);
+    response.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+//update quantity
+router.put("/update-quantity", jwtAuth, async (request, response) => {
+  try {
+    const { productId, userId, cartId, operation } = request.body;
+    const productRes = await cartDataModel.findOne({
+      productId: productId,
+      userId: userId,
+      _id: cartId,
+    });
+    if (operation === "negative") {
+      if (productRes === null) {
+        return response.status(400).json({ message: "Item Not Found" });
+      }
+
+      if (productRes.quantity <= 1) {
+        await cartDataModel.deleteOne({
+          productId: productId,
+          userId: userId,
+          _id: cartId,
+        });
+        return response
+          .status(200)
+          .json({ message: "Item Deleted Successfully" });
+      } else {
+        await cartDataModel.updateOne(
+          {
+            productId: productId,
+            userId: userId,
+            _id: cartId,
+          },
+          { $set: { quantity: productRes.quantity - 1 } }
+        );
+        return response
+          .status(200)
+          .json({ message: "Item Quantity Updated Successfully" });
+      }
+    } else {
+      if (productRes === null) {
+        return response.status(400).json({ message: "Item Not Found" });
+      }
+
+      await cartDataModel.updateOne(
+        {
+          productId: productId,
+          userId: userId,
+          _id: cartId,
+        },
+        { $set: { quantity: productRes.quantity + 1 } }
+      );
+      return response
+        .status(200)
+        .json({ message: "Item Quantity Updated Successfully" });
+    }
+  } catch (error) {
+    console.log(error.message);
+    response.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+//payment checkout
+router.post("/payment-checkout", jwtAuth, async (request, response) => {
+  try {
+    const { userId } = request.body;
+
+    const customerRes = await usersDataModel.findOne({ userId: userId });
+    const itemsRes = await cartDataModel.find({ userId: userId });
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: itemsRes.map((eachItem) => ({
+        price_data: {
+          currency: "inr",
+          product_data: {
+            name: eachItem.name,
+            description: eachItem.description,
+            metadata: {
+              productId: eachItem.productId,
+              userId: eachItem.userId,
+            },
+          },
+          unit_amount: eachItem.price * 100,
+        },
+        quantity: eachItem.quantity,
+      })),
+      customer: customerRes.customerId,
+      mode: "payment",
+      success_url: "http://localhost:3000/success",
+      cancel_url: "http://localhost:3000/failure",
+    });
+
+    response.status(200).json({ session: session });
+  } catch (error) {
+    console.log(error.message);
+    response.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+router.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  (request, response) => {
+    const sig = request.headers["stripe-signature"];
+
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        request.body,
+        sig,
+        "whsec_5657c8215d9ad20c837a2761b04e1310c2bc95a4a170f4738f0a422ea2bcfbc4"
+      );
+    } catch (err) {
+      response.status(400).send(`Webhook Error: ${err.message}`);
+      return;
+    }
+
+    // Handle the event
+    switch (event.type) {
+      case "checkout.session.completed":
+        const checkoutSession = event.data.object;
+        // Then define and call a function to handle the event
+        console.log(checkoutSession);
+        break;
+      // ... handle other event types
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+
+    // Return a 200 response to acknowledge receipt of the event
+    // response.send();
+  }
+);
 
 module.exports = router;
