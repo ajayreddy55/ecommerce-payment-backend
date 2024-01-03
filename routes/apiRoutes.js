@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const jwtAuth = require("../middleware/jwtAuth");
 const cartDataModel = require("../models/cartData");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const { mailDetails } = require("../controller/controller");
 
 const router = express.Router();
 
@@ -80,6 +81,9 @@ router.post("/add-customer", async (request, response) => {
       const customer = await stripe.customers.create({
         name: name,
         email: email,
+        metadata: {
+          userId: userId,
+        },
       });
       const userNew = new usersDataModel({
         name: name,
@@ -255,7 +259,7 @@ router.post("/payment-checkout", jwtAuth, async (request, response) => {
 router.post(
   "/webhook",
   express.raw({ type: "application/json" }),
-  (request, response) => {
+  async (request, response) => {
     const sig = request.headers["stripe-signature"];
 
     let event;
@@ -276,7 +280,18 @@ router.post(
       case "checkout.session.completed":
         const checkoutSession = event.data.object;
         // Then define and call a function to handle the event
-        console.log(checkoutSession);
+        const customerId = checkoutSession.customer;
+        const customerDetails = await stripe.customers.retrieve(customerId);
+        await mailDetails(
+          customerDetails.email,
+          checkoutSession.id,
+          customerDetails.name,
+          response
+        );
+        await cartDataModel.deleteMany({
+          userId: customerDetails.metadata.userId,
+        });
+        // console.log(checkoutSession);
         break;
       // ... handle other event types
       default:
